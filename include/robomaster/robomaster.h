@@ -8,6 +8,7 @@
 #include "bsp/uart.h"
 
 namespace robomaster {
+    void transmit(bsp_uart_e device, uint16_t cmd_id, const uint8_t *data, uint16_t size);
     // 常规链路
     namespace basic {
         struct data_t {
@@ -87,6 +88,12 @@ namespace robomaster {
                 uint32_t timestamp;
             };
             const data_t *data();
+        }
+        namespace custom {
+            void bind(uint8_t *ptr, size_t size);
+            template <typename T>
+            void bind(T &data) { bind(reinterpret_cast<uint8_t *>(&data), sizeof(T)); }
+            uint32_t get_timestamp();
         }
         void init(bsp_uart_e uart);
     }
