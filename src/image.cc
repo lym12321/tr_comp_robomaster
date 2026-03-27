@@ -1,96 +1,15 @@
 //
-// Created by fish on 2026/2/3.
+// Created by fish on 2026/3/27.
 //
 
 #include "robomaster/robomaster.h"
-
-#include <cstring>
-
 #include "bsp/time.h"
 #include "utils/crc.h"
 #include "utils/logger.h"
 
+#include <cstring>
+
 using namespace robomaster;
-
-void robomaster::transmit(bsp_uart_e device, uint16_t cmd_id, const uint8_t *data, uint16_t size) {
-    static uint8_t tx_buf[512];
-    if (size + sizeof(frame_header_t) + 4 > sizeof(tx_buf)) {
-        logger::error("[robomaster] transmit data too large: %d bytes", size);
-        return;
-    }
-    frame_header_t header = { .sof = 0xa5, .data_length = size, .seq = 0, .crc = 0 };
-    crc8::append(header);
-    memcpy(tx_buf, &header, sizeof(header));
-    memcpy(tx_buf + sizeof(header), &cmd_id, 2);
-    memcpy(tx_buf + sizeof(header) + 2, data, size);
-    auto crc = crc16::calc(tx_buf, sizeof(header) + 2 + size, false);
-    memcpy(tx_buf + sizeof(header) + 2 + size, &crc, 2);
-    bsp_uart_send_async(device, tx_buf, sizeof(header) + 2 + size + 2);
-}
-
-namespace robomaster::basic {
-    bsp_uart_e port;
-    data_t data_;
-    frame_header_t header;
-    void callback(bsp_uart_e device, const uint8_t *data, size_t size);
-}
-
-const basic::data_t* basic::data() {
-    return &data_;
-}
-
-void basic::init(bsp_uart_e uart) {
-    port = uart;
-    bsp_uart_set_baudrate(uart, 115200);
-    bsp_uart_set_callback(uart, callback);
-}
-
-void basic::callback(bsp_uart_e device, const uint8_t* data, size_t size) {
-    if (size < sizeof(frame_header_t)) return;
-
-    size_t p = 0;
-    while (p + sizeof(frame_header_t) < size) {
-        memcpy(&header, data + p, sizeof(frame_header_t));
-        if (header.sof != 0xa5 or !crc8::verify(header)) { p ++; continue; }
-        if (crc16::calc(data + p, sizeof(frame_header_t) + 2 + header.data_length) !=
-            *(uint16_t *)(data + p + sizeof(frame_header_t) + 2 + header.data_length))
-        {
-            p ++;
-            continue;
-        }
-
-        uint16_t cmd_id = *(uint16_t *)(data + p + sizeof(frame_header_t));
-        p += sizeof(frame_header_t) + 2;
-
-#define upd(x) if(header.data_length == sizeof(data_.x)) memcpy(&data_.x, data + p, sizeof(data_.x)), data_.timestamps.x = bsp_time_get_ms()
-        switch(cmd_id) {
-        case 0x0001: upd(game_status); break;
-        case 0x0002: upd(game_result); break;
-        case 0x0003: upd(game_robot_hp); break;
-        case 0x0101: upd(event_data); break;
-        case 0x0104: upd(referee_warning); break;
-        case 0x0105: upd(dart_info); break;
-        case 0x0201: upd(robot_status); break;
-        case 0x0202: upd(power_heat_data); break;
-        case 0x0203: upd(robot_pos); break;
-        case 0x0204: upd(buff); break;
-        case 0x0206: upd(hurt_data); break;
-        case 0x0207: upd(shoot_data); break;
-        case 0x0208: upd(projectile_allowance); break;
-        case 0x0209: upd(rfid_status); break;
-        case 0x020a: upd(dart_client_cmd); break;
-        case 0x020b: upd(ground_robot_position); break;
-        case 0x020c: upd(radar_mark_data); break;
-        case 0x020d: upd(sentry_info); break;
-        case 0x020e: upd(radar_info); break;
-        default:
-            logger::warn("[referee/basic] unknown cmd_id: 0x%04X", cmd_id);
-        }
-#undef upd
-
-        p += header.data_length + 2; // data + crc16
-    }
-}
 
 namespace robomaster::image {
     bsp_uart_e port;
@@ -182,7 +101,6 @@ void image::callback(bsp_uart_e device, const uint8_t* data, size_t size) {
             p += header.data_length + 2; // data + crc16
         } else {
             p ++;
-            // logger::error("???");
         }
     }
 }

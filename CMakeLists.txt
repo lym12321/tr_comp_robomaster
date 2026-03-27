@@ -12,7 +12,7 @@ target_include_directories(robomaster
         PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/internal
 )
 
-target_compile_options(robomaster PRIVATE -O3)
+#target_compile_options(robomaster PRIVATE -O3)
 
 target_link_libraries(robomaster PUBLIC bsp m)
 target_link_libraries(robomaster PUBLIC components::utils)

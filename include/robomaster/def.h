@@ -160,6 +160,48 @@ namespace robomaster {
         struct radar_info_t {
             uint8_t radar_info;
         } __attribute__((packed));
+
+        namespace ui {
+            // 机器人交互数据头
+            struct interaction_header_t {
+                uint16_t data_cmd_id; // 注意这里是子内容 id
+                uint16_t sender_id;
+                uint16_t receiver_id;
+            } __attribute__ ((packed));
+
+            struct figure_pkg_t {
+                char figure_name[3];
+                uint32_t operate_type : 3;
+                uint32_t figure_type : 3;
+                uint32_t layer : 4;
+                uint32_t color : 4;
+                uint32_t details_a : 9;
+                uint32_t details_b : 9;
+                uint32_t width : 10;
+                uint32_t start_x : 11;
+                uint32_t start_y :  11;
+                uint32_t details_c : 10;
+                uint32_t details_d : 11;
+                uint32_t details_e : 11;
+            } __attribute__ ((packed));
+
+            struct string_pkg_t {
+                char figure_name[3];
+                uint32_t operate_type : 3;
+                uint32_t figure_type : 3;
+                uint32_t layer : 4;
+                uint32_t color : 4;
+                uint32_t details_a : 9;
+                uint32_t details_b : 9;
+                uint32_t width : 10;
+                uint32_t start_x : 11;
+                uint32_t start_y :  11;
+                uint32_t details_c : 10;
+                uint32_t details_d : 11;
+                uint32_t details_e : 11;
+                char data[30];
+            } __attribute__ ((packed));
+        }
     }
 
     namespace image {

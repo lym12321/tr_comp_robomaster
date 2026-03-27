@@ -75,6 +75,103 @@ namespace robomaster {
 
         void init(bsp_uart_e uart);
         const data_t *data();
+
+        namespace ui {
+            enum figure_type_e {
+                UI_FIGURE_LINE = 0,            // 直线
+                UI_FIGURE_RECTANGLE = 1,       // 矩形
+                UI_FIGURE_CIRCLE = 2,          // 正圆
+                UI_FIGURE_OVAL = 3,            // 椭圆
+                UI_FIGURE_ARC = 4,             // 圆弧
+                UI_FIGURE_FLOAT = 5,           // 浮点数
+                UI_FIGURE_INT = 6,             // 整型数
+                UI_FIGURE_STRING = 7           // 字符
+            };
+            enum color_e {
+                UI_COLOR_SELF,
+                UI_COLOR_YELLOW,
+                UI_COLOR_GREEN,
+                UI_COLOR_ORANGE,
+                UI_COLOR_PURPLE,
+                UI_COLOR_PINK,
+                UI_COLOR_CYAN,
+                UI_COLOR_BLACK,
+                UI_COLOR_WHITE,
+            };
+            void _add(const char *name, uint8_t figure_type, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e);
+            void _update(const char *name, uint8_t figure_type, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e);
+            void add_string(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t font_size, const char *str);
+            void update_string(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t font_size, const char *str);
+            void remove(const char *name, uint8_t layer);
+
+            inline void add_line(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x1, uint32_t y1, uint32_t x2, uint32_t y2) {
+                _add(name, UI_FIGURE_LINE, layer, color, width, x1, y1, 0, 0, 0, x2, y2);
+            }
+
+            inline void add_rectangle(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x1, uint32_t y1, uint32_t x2, uint32_t y2) {
+                _add(name, UI_FIGURE_RECTANGLE, layer, color, width, x1, y1, 0, 0, 0, x2, y2);
+            }
+
+            inline void add_circle(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t r) {
+                _add(name, UI_FIGURE_CIRCLE, layer, color, width, x, y, 0, 0, r, 0, 0);
+            }
+
+            inline void add_oval(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t rx, uint32_t ry) {
+                _add(name, UI_FIGURE_OVAL, layer, color, width, x, y, 0, 0, 0, rx, ry);
+            }
+
+            inline void add_arc(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t al, uint32_t ar, uint32_t rx, uint32_t ry) {
+                _add(name, UI_FIGURE_ARC, layer, color, width, x, y, al, ar, 0, rx, ry);
+            }
+
+            inline void add_float(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t font_size, float val) {
+                union { int32_t n; struct { uint32_t c : 10, d : 11, e : 11; } __attribute__((packed)) s; } u = {
+                    .n = static_cast <int32_t> (val * 1000)
+                };
+                _add(name, UI_FIGURE_FLOAT, layer, color, width, x, y, font_size, 0, u.s.c, u.s.d, u.s.e);
+            }
+
+            inline void add_int(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t font_size, int32_t val) {
+                union { int32_t n; struct { uint32_t c : 10, d : 11, e : 11; } __attribute__((packed)) s; } u = {
+                    .n = val
+                };
+                _add(name, UI_FIGURE_INT, layer, color, width, x, y, font_size, 0, u.s.c, u.s.d, u.s.e);
+            }
+
+            inline void update_line(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x1, uint32_t y1, uint32_t x2, uint32_t y2) {
+                _update(name, UI_FIGURE_LINE, layer, color, width, x1, y1, 0, 0, 0, x2, y2);
+            }
+
+            inline void update_rectangle(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x1, uint32_t y1, uint32_t x2, uint32_t y2) {
+                _update(name, UI_FIGURE_RECTANGLE, layer, color, width, x1, y1, 0, 0, 0, x2, y2);
+            }
+
+            inline void update_circle(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t r) {
+                _update(name, UI_FIGURE_CIRCLE, layer, color, width, x, y, 0, 0, r, 0, 0);
+            }
+
+            inline void update_oval(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t rx, uint32_t ry) {
+                _update(name, UI_FIGURE_OVAL, layer, color, width, x, y, 0, 0, 0, rx, ry);
+            }
+
+            inline void update_arc(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t al, uint32_t ar, uint32_t rx, uint32_t ry) {
+                _update(name, UI_FIGURE_ARC, layer, color, width, x, y, al, ar, 0, rx, ry);
+            }
+
+            inline void update_float(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t font_size, float val) {
+                union { int32_t n; struct { uint32_t c : 10, d : 11, e : 11; } __attribute__((packed)) s; } u = {
+                    .n = static_cast <int32_t> (val * 1000)
+                };
+                _update(name, UI_FIGURE_FLOAT, layer, color, width, x, y, font_size, 0, u.s.c, u.s.d, u.s.e);
+            }
+
+            inline void update_int(const char *name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t font_size, int32_t val) {
+                union { int32_t n; struct { uint32_t c : 10, d : 11, e : 11; } __attribute__((packed)) s; } u = {
+                    .n = val
+                };
+                _update(name, UI_FIGURE_INT, layer, color, width, x, y, font_size, 0, u.s.c, u.s.d, u.s.e);
+            }
+        }
     }
     // 图传链路
     namespace image {
