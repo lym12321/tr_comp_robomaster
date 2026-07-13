@@ -32,7 +32,8 @@ void robomaster::transmit(bsp_uart_e device, uint16_t cmd_id, const uint8_t *dat
     memcpy(tx_buf[device] + sizeof(header) + 2, data, size);
     auto crc = crc16::calc(tx_buf[device], sizeof(header) + 2 + size, 0xffff);
     memcpy(tx_buf[device] + sizeof(header) + 2 + size, &crc, 2);
-    bsp_uart_send_async(device, tx_buf[device], sizeof(header) + 2 + size + 2);
+    if (const auto st = bsp_uart_send_async(device, tx_buf[device], sizeof(header) + 2 + size + 2); st != BSP_STATUS_OK)
+        logger::warn("[robomaster] send_async failed: %d", (int) st);
 }
 
 namespace robomaster::basic {
@@ -51,8 +52,8 @@ const basic::data_t* basic::data() {
 
 void basic::init(bsp_uart_e uart) {
     port = uart;
-    bsp_uart_set_baudrate(uart, 115200);
-    bsp_uart_set_callback(uart, callback);
+    BSP_ASSERT(bsp_uart_set_baudrate(uart, 115200) == BSP_STATUS_OK);
+    BSP_ASSERT(bsp_uart_set_callback(uart, callback) == BSP_STATUS_OK);
     os::task::static_create(ui::task, nullptr, "robomaster::ui", 512, os::task::Priority::HIGH);
 }
 

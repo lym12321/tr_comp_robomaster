@@ -32,8 +32,8 @@ const image::rc::data_t *image::rc::data() {
 void image::init(bsp_uart_e uart) {
     static_assert(sizeof(rc::raw_frame_t) == 21);
     port = uart;
-    bsp_uart_set_baudrate(uart, 921600);
-    bsp_uart_set_callback(uart, callback);
+    BSP_ASSERT(bsp_uart_set_baudrate(uart, 921600) == BSP_STATUS_OK);
+    BSP_ASSERT(bsp_uart_set_callback(uart, callback) == BSP_STATUS_OK);
 }
 
 void image::custom::bind(uint8_t* _ptr, size_t _size) {
