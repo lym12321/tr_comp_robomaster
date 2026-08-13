@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include "bsp/time.h"
+#include "bsp/sys.h"
 #include "utils/crc.h"
 #include "utils/logger.h"
 #include "utils/os.h"
@@ -15,31 +16,38 @@
 using namespace robomaster;
 
 static uint8_t ui_buf[256];
-static uint8_t tx_buf[BSP_UART_DEVICE_COUNT][256];
 os::queue<basic::ui::figure_pkg_t> ui_figure_queue(50);
 os::queue<basic::ui::string_pkg_t> ui_string_queue(50);
 
 void robomaster::transmit(bsp_uart_e device, uint16_t cmd_id, const uint8_t *data, uint16_t size) {
-    if (size + sizeof(frame_header_t) + 4 > sizeof(tx_buf[device])) {
+    uint8_t tx_buf[256];
+    if (size + sizeof(frame_header_t) + 4 > sizeof(tx_buf)) {
         logger::error("[robomaster] transmit data too large: %d bytes", size);
         return;
     }
-    memset(tx_buf[device], 0, sizeof(tx_buf[device]));
+    if (size > 0 && data == nullptr) return;
+    memset(tx_buf, 0, sizeof(tx_buf));
     frame_header_t header = { .sof = 0xa5, .data_length = size, .seq = 0, .crc = 0 };
     crc8::append(header);
-    memcpy(tx_buf[device], &header, sizeof(header));
-    memcpy(tx_buf[device] + sizeof(header), &cmd_id, 2);
-    memcpy(tx_buf[device] + sizeof(header) + 2, data, size);
-    auto crc = crc16::calc(tx_buf[device], sizeof(header) + 2 + size, 0xffff);
-    memcpy(tx_buf[device] + sizeof(header) + 2 + size, &crc, 2);
-    if (const auto st = bsp_uart_send_async(device, tx_buf[device], sizeof(header) + 2 + size + 2); st != BSP_STATUS_OK)
-        logger::warn("[robomaster] send_async failed: %d", (int) st);
+    memcpy(tx_buf, &header, sizeof(header));
+    memcpy(tx_buf + sizeof(header), &cmd_id, 2);
+    if (size > 0) memcpy(tx_buf + sizeof(header) + 2, data, size);
+    const auto crc = crc16::calc(tx_buf, sizeof(header) + 2 + size, 0xffff);
+    memcpy(tx_buf + sizeof(header) + 2 + size, &crc, 2);
+    const bsp_status_t status = bsp_uart_send_async(
+        device, tx_buf, sizeof(header) + 2 + size + 2
+    );
+    if (status != BSP_STATUS_OK) {
+        logger::warn("[robomaster] send_async failed: %d", static_cast<int>(status));
+    }
 }
 
 namespace robomaster::basic {
     bsp_uart_e port;
     data_t data_;
     frame_header_t header;
+    uint8_t rx_stream[BSP_UART_BUFFER_SIZE * 2];
+    size_t rx_size;
     void callback(bsp_uart_e device, const uint8_t *data, size_t size);
     namespace ui {
         [[noreturn]] void task(void *args);
@@ -50,6 +58,13 @@ const basic::data_t* basic::data() {
     return &data_;
 }
 
+basic::data_t basic::state() {
+    const unsigned long state = bsp_sys_enter_critical();
+    const data_t copy = data_;
+    bsp_sys_exit_critical(state);
+    return copy;
+}
+
 void basic::init(bsp_uart_e uart) {
     port = uart;
     BSP_ASSERT(bsp_uart_set_baudrate(uart, 115200) == BSP_STATUS_OK);
@@ -58,20 +73,37 @@ void basic::init(bsp_uart_e uart) {
 }
 
 void basic::callback(bsp_uart_e device, const uint8_t* data, size_t size) {
-    if (size < sizeof(frame_header_t)) return;
+    if (data == nullptr || size == 0) return;
+    if (size > sizeof(rx_stream)) {
+        data += size - sizeof(rx_stream);
+        size = sizeof(rx_stream);
+        rx_size = 0;
+    } else if (size > sizeof(rx_stream) - rx_size) {
+        rx_size = 0;
+    }
+    memcpy(rx_stream + rx_size, data, size);
+    rx_size += size;
+    data = rx_stream;
+    size = rx_size;
 
     size_t p = 0;
-    while (p + sizeof(frame_header_t) < size) {
+    while (p + sizeof(frame_header_t) <= size) {
         memcpy(&header, data + p, sizeof(frame_header_t));
         if (header.sof != 0xa5 or !crc8::verify(header)) { p ++; continue; }
-        if (crc16::calc(data + p, sizeof(frame_header_t) + 2 + header.data_length, 0xffff) !=
-            *(uint16_t *)(data + p + sizeof(frame_header_t) + 2 + header.data_length))
+        const size_t frame_size = sizeof(frame_header_t) + 2 + header.data_length + 2;
+        if (frame_size > BSP_UART_BUFFER_SIZE) { p++; continue; }
+        if (frame_size > size - p) break;
+
+        uint16_t expected_crc;
+        memcpy(&expected_crc, data + p + frame_size - sizeof(expected_crc), sizeof(expected_crc));
+        if (crc16::calc(data + p, frame_size - sizeof(expected_crc), 0xffff) != expected_crc)
         {
             p ++;
             continue;
         }
 
-        uint16_t cmd_id = *(uint16_t *)(data + p + sizeof(frame_header_t));
+        uint16_t cmd_id;
+        memcpy(&cmd_id, data + p + sizeof(frame_header_t), sizeof(cmd_id));
         p += sizeof(frame_header_t) + 2;
 
 #define upd(x) if(header.data_length == sizeof(data_.x)) memcpy(&data_.x, data + p, sizeof(data_.x)), data_.timestamps.x = bsp_time_get_ms()
@@ -102,9 +134,20 @@ void basic::callback(bsp_uart_e device, const uint8_t* data, size_t size) {
 
         p += header.data_length + 2; // data + crc16
     }
+
+    if (p > 0) {
+        memmove(rx_stream, rx_stream + p, rx_size - p);
+        rx_size -= p;
+    }
+}
+
+static void copy_protocol_field(char *dst, size_t capacity, const char *src) {
+    if (dst == nullptr || capacity == 0 || src == nullptr) return;
+    memcpy(dst, src, std::min(capacity, strlen(src)));
 }
 
 void basic::ui::_add(const char* name, uint8_t figure_type, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+    if (name == nullptr) return;
     figure_pkg_t pkg = {
         .operate_type = 1,
         .figure_type = figure_type,
@@ -119,11 +162,12 @@ void basic::ui::_add(const char* name, uint8_t figure_type, uint8_t layer, uint1
         .details_d = d,
         .details_e = e
     };
-    strcpy(pkg.figure_name, name);
+    copy_protocol_field(pkg.figure_name, sizeof(pkg.figure_name), name);
     ui_figure_queue.send(pkg);
 }
 
 void basic::ui::_update(const char* name, uint8_t figure_type, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+    if (name == nullptr) return;
     figure_pkg_t pkg = {
         .operate_type = 2,
         .figure_type = figure_type,
@@ -138,11 +182,12 @@ void basic::ui::_update(const char* name, uint8_t figure_type, uint8_t layer, ui
         .details_d = d,
         .details_e = e
     };
-    strcpy(pkg.figure_name, name);
+    copy_protocol_field(pkg.figure_name, sizeof(pkg.figure_name), name);
     ui_figure_queue.send(pkg);
 }
 
 void basic::ui::add_string(const char* name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t font_size, const char* str) {
+    if (name == nullptr || str == nullptr) return;
     string_pkg_t pkg = {
         .operate_type = 1,
         .figure_type = 7,
@@ -154,12 +199,13 @@ void basic::ui::add_string(const char* name, uint8_t layer, uint16_t color, uint
         .start_x = x,
         .start_y = y
     };
-    strcpy(pkg.figure_name, name);
-    strcpy(pkg.data, str);
+    copy_protocol_field(pkg.figure_name, sizeof(pkg.figure_name), name);
+    copy_protocol_field(pkg.data, sizeof(pkg.data), str);
     ui_string_queue.send(pkg);
 }
 
 void basic::ui::update_string(const char* name, uint8_t layer, uint16_t color, uint32_t width, uint32_t x, uint32_t y, uint32_t font_size, const char* str) {
+    if (name == nullptr || str == nullptr) return;
     string_pkg_t pkg = {
         .operate_type = 2,
         .figure_type = 7,
@@ -171,26 +217,31 @@ void basic::ui::update_string(const char* name, uint8_t layer, uint16_t color, u
         .start_x = x,
         .start_y = y
     };
-    strcpy(pkg.figure_name, name);
-    strcpy(pkg.data, str);
+    copy_protocol_field(pkg.figure_name, sizeof(pkg.figure_name), name);
+    copy_protocol_field(pkg.data, sizeof(pkg.data), str);
     ui_string_queue.send(pkg);
 }
 
 void basic::ui::remove(const char* name, uint8_t layer) {
+    if (name == nullptr) return;
     figure_pkg_t pkg = {
         .operate_type = 3,
         .layer = layer
     };
-    strcpy(pkg.figure_name, name);
+    copy_protocol_field(pkg.figure_name, sizeof(pkg.figure_name), name);
     ui_figure_queue.send(pkg);
 }
 
 [[noreturn]] void basic::ui::task(void *args) {
     for (;;) {
-        while (bsp_time_get_ms() - data()->timestamps.robot_status > 100 or (!ui_figure_queue.size() and !ui_string_queue.size())) {
+        data_t current;
+        do {
+            current = state();
+            if (bsp_time_get_ms() - current.timestamps.robot_status <= 100 &&
+                (ui_figure_queue.size() || ui_string_queue.size())) break;
             os::task::sleep(1);
-        }
-        const uint16_t sender = data()->robot_status.robot_id, receiver = 0x0100 + sender;
+        } while (true);
+        const uint16_t sender = current.robot_status.robot_id, receiver = 0x0100 + sender;
         if (ui_string_queue.size()) {
             string_pkg_t pkg = {};
             interaction_header_t ui_header = {

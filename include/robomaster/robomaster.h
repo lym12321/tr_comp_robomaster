@@ -75,6 +75,7 @@ namespace robomaster {
 
         void init(bsp_uart_e uart);
         const data_t *data();
+        data_t state();
 
         namespace ui {
             enum figure_type_e {
@@ -185,6 +186,7 @@ namespace robomaster {
                 uint32_t timestamp;
             };
             const data_t *data();
+            data_t state();
         }
         namespace custom {
             void bind(uint8_t *ptr, size_t size);

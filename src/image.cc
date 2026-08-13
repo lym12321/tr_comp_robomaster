@@ -4,6 +4,7 @@
 
 #include "robomaster/robomaster.h"
 #include "bsp/time.h"
+#include "bsp/sys.h"
 #include "utils/crc.h"
 #include "utils/logger.h"
 
@@ -14,6 +15,8 @@ using namespace robomaster;
 namespace robomaster::image {
     bsp_uart_e port;
     frame_header_t header;
+    uint8_t rx_stream[BSP_UART_BUFFER_SIZE * 2];
+    size_t rx_size;
     namespace rc {
         raw_frame_t raw;
         data_t rc_data_;
@@ -29,6 +32,13 @@ const image::rc::data_t *image::rc::data() {
     return &rc_data_;
 }
 
+image::rc::data_t image::rc::state() {
+    const unsigned long state = bsp_sys_enter_critical();
+    const data_t copy = rc_data_;
+    bsp_sys_exit_critical(state);
+    return copy;
+}
+
 void image::init(bsp_uart_e uart) {
     static_assert(sizeof(rc::raw_frame_t) == 21);
     port = uart;
@@ -37,18 +47,39 @@ void image::init(bsp_uart_e uart) {
 }
 
 void image::custom::bind(uint8_t* _ptr, size_t _size) {
+    const unsigned long state = bsp_sys_enter_critical();
     ptr = _ptr;
     size = _size;
+    bsp_sys_exit_critical(state);
 }
 
 uint32_t image::custom::get_timestamp() {
-    return timestamp;
+    const unsigned long state = bsp_sys_enter_critical();
+    const uint32_t copy = timestamp;
+    bsp_sys_exit_critical(state);
+    return copy;
 }
 
 void image::callback(bsp_uart_e device, const uint8_t* data, size_t size) {
+    if (data == nullptr || size == 0) return;
+    if (size > sizeof(rx_stream)) {
+        data += size - sizeof(rx_stream);
+        size = sizeof(rx_stream);
+        rx_size = 0;
+    } else if (size > sizeof(rx_stream) - rx_size) {
+        rx_size = 0;
+    }
+    memcpy(rx_stream + rx_size, data, size);
+    rx_size += size;
+    data = rx_stream;
+    size = rx_size;
+
     size_t p = 0;
     while (p < size) {
-        if (data[p] == 0xa9 and data[p+1] == 0x53 and p + sizeof(rc::raw_frame_t) <= size) {
+        const size_t remaining = size - p;
+        if (remaining == 1 && data[p] == 0xa9) break;
+        if (remaining >= 2 && data[p] == 0xa9 && data[p + 1] == 0x53) {
+            if (remaining < sizeof(rc::raw_frame_t)) break;
             memcpy(&rc::raw, data+p, sizeof(rc::raw_frame_t));
             if (!crc16::verify(rc::raw)) { p++; continue; }
 
@@ -76,16 +107,23 @@ void image::callback(bsp_uart_e device, const uint8_t* data, size_t size) {
 
             p += sizeof(rc::raw_frame_t);
         } else if (data[p] == 0xa5) {
+            if (remaining < sizeof(frame_header_t)) break;
             memcpy(&header, data + p, sizeof(frame_header_t));
             if (header.sof != 0xa5 or !crc8::verify(header)) { p ++; continue; }
-            if (crc16::calc(data + p, sizeof(frame_header_t) + 2 + header.data_length) !=
-                *(uint16_t *)(data + p + sizeof(frame_header_t) + 2 + header.data_length))
+            const size_t frame_size = sizeof(frame_header_t) + 2 + header.data_length + 2;
+            if (frame_size > BSP_UART_BUFFER_SIZE) { p++; continue; }
+            if (frame_size > remaining) break;
+
+            uint16_t expected_crc;
+            memcpy(&expected_crc, data + p + frame_size - sizeof(expected_crc), sizeof(expected_crc));
+            if (crc16::calc(data + p, frame_size - sizeof(expected_crc)) != expected_crc)
             {
                 p ++;
                 continue;
             }
 
-            uint16_t cmd_id = *(uint16_t *)(data + p + sizeof(frame_header_t));
+            uint16_t cmd_id;
+            memcpy(&cmd_id, data + p + sizeof(frame_header_t), sizeof(cmd_id));
             p += sizeof(frame_header_t) + 2;
 
             switch(cmd_id) {
@@ -102,5 +140,10 @@ void image::callback(bsp_uart_e device, const uint8_t* data, size_t size) {
         } else {
             p ++;
         }
+    }
+
+    if (p > 0) {
+        memmove(rx_stream, rx_stream + p, rx_size - p);
+        rx_size -= p;
     }
 }
